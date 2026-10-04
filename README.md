@@ -1,4 +1,3 @@
-
 Локальный агент управления Firefox на Ubuntu.
 
 ## Архитектура
@@ -20,7 +19,7 @@ firefox --no-remote --new-instance \\
   --remote-debugging-port 9222 \\
   --remote-allow-hosts 127.0.0.1 \\
   --remote-allow-origins http://127.0.0.1:9222 \\
-  --new-window 'https://chat.deepseek.com/'
+  --new-window 'about:blank'
 ```
 
 ## Запуск агента
