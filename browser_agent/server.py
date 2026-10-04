@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import json
 import threading
@@ -103,6 +104,20 @@ def ev(t, expr):
     ).get("result", {}).get("value")
 
 
+def input_text(t, text):
+    """Type text through Firefox's CDP input pipeline so React receives input events."""
+    for ch in text:
+        cdp(
+            t,
+            "Input.dispatchKeyEvent",
+            {
+                "type": "char",
+                "text": ch,
+                "key": ch,
+            },
+        )
+
+
 def target(p):
     ts = refresh_tabs()
     if not ts:
@@ -182,19 +197,74 @@ def handle(p):
         e = (
             """(()=>{const n=%s.toLowerCase(),
             xs=[...document.querySelectorAll('button,a,input[type=button],input[type=submit],input[type=reset],[role=button]')],
-            x=xs.find(x=>{const v=(x.innerText||x.value||x.getAttribute('aria-label')||'').trim().toLowerCase();
+            x0=xs.find(x=>{const v=(x.innerText||x.value||x.getAttribute('aria-label')||x.getAttribute('title')||'').trim().toLowerCase();
             return v===n||v.includes(n)});
+            let x=x0;
+            if(!x && (n==='отправить'||n==='send')){
+                const candidates=[...document.querySelectorAll('[role=button]')].filter(b=>
+                    !b.className.toString().includes('disabled') &&
+                    b.className.toString().includes('ds-button--primary') &&
+                    b.className.toString().includes('ds-button--filled') &&
+                    b.className.toString().includes('ds-button--circle'));
+                x=candidates[candidates.length-1];
+            }
             if(!x)return JSON.stringify({clicked:false});
-            x.click();return JSON.stringify({clicked:true,text:x.innerText||x.value||''})})()"""
+            x.scrollIntoView({block:'center',inline:'center'});
+            const r=x.getBoundingClientRect();
+            return JSON.stringify({clicked:true,text:x.innerText||x.value||x.getAttribute('aria-label')||'',
+            x:r.left+r.width/2,y:r.top+r.height/2})})()"""
             % s
         )
+        data = json.loads(ev(t, e) or "{}")
+        if not data.get("clicked"):
+            return {"ok": True, "tab": tab_slots.get(t.get("id")), **data}
+
+        x = float(data["x"])
+        y = float(data["y"])
+        cdp(t, "Input.dispatchMouseEvent", {
+            "type": "mouseMoved", "x": x, "y": y,
+        })
+        cdp(t, "Input.dispatchMouseEvent", {
+            "type": "mousePressed", "x": x, "y": y,
+            "button": "left", "clickCount": 1,
+        })
+        cdp(t, "Input.dispatchMouseEvent", {
+            "type": "mouseReleased", "x": x, "y": y,
+            "button": "left", "clickCount": 1,
+        })
         return {
             "ok": True,
             "tab": tab_slots.get(t.get("id")),
-            **json.loads(ev(t, e) or "{}"),
+            "clicked": True,
+            "text": data.get("text", ""),
         }
 
-    if action in ("type_text", "paste_text"):
+    if action == "type_text":
+        text = p.get("text", "")
+        state = json.loads(
+            ev(
+                t,
+                """(()=>{const x=document.activeElement;
+                return JSON.stringify({focused:!!x&&x.matches('input,textarea,[contenteditable=true]'),
+                tag:x?.tagName||'',value:x?.value||''})})()""",
+            ) or "{}"
+        )
+        if not state.get("focused"):
+            return {
+                "ok": True,
+                "tab": tab_slots.get(t.get("id")),
+                "typed": False,
+                "error": "active element is not editable",
+            }
+        input_text(t, text)
+        return {
+            "ok": True,
+            "tab": tab_slots.get(t.get("id")),
+            "typed": True,
+            "characters": len(text),
+        }
+
+    if action == "paste_text":
         s = json.dumps(p.get("text", ""), ensure_ascii=False)
         e = (
             """(()=>{const v=%s,x=document.activeElement;
@@ -319,3 +389,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+[executed on device: leoVM (db283b0a-4aa9-4857-9dc8-18ec78e2df1f)]
